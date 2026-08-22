@@ -25,8 +25,9 @@ Aura Pulse gives you a windowed dashboard. Powerboard gives you the same data in
 - **Uptime counter** — days, hours, minutes, seconds
 - **Braille power graph** — overlapping traces for W, kWh, and cost over the last 5 minutes
 - **CSV logging** — auto-rotating monthly files for historical analysis
-- **Clipboard Vault & AI Copilot (Tab 4 / [F4])** — SQLite clipboard manager, multi-provider smart copilot (Ollama, LM Studio, OpenAI, Gemini, DeepSeek), token accounting, and recipe actions
-- **Data Center & GPU Cluster Power Model** — 20,000x NVIDIA A100 facility power, PUE 1.3 overhead, 63.78M kWh/yr consumption, and $6.38M/yr operational electricity costing with NVIDIA, Uptime Institute, and U.S. EIA citations
+- **Vim-like command bar** — `:q`, `:help`, `:graph`
+- **Interactive Live GPU Power & Cost Calculator (Tab 4 / [F4])** — interactive real-time data center & home inference calculator (NVIDIA A100, H100, H200, B200, RTX 4090, dynamic GPU counts, % load, PUE overhead, $/kWh electricity tariffs, and one-key hardware presets)
+- **Clipboard Vault & AI Copilot** — SQLite clipboard manager, multi-provider smart copilot (Ollama, LM Studio, OpenAI, Gemini, DeepSeek), token accounting, and recipe actions
 - **System Optimizer & Hardware Benchmarks** — bare-metal memory bandwidth, bitwise MOPS, disk I/O, and kernel/power-profiles-daemon tuning
 - **60 FPS FTXUI rendering** — smooth, no flicker, low CPU
 - **SQLite telemetry store** — for trend analysis
