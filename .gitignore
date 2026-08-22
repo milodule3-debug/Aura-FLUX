@@ -12,6 +12,7 @@ powerboard
 # vcpkg installed packages
 vcpkg_installed/
 vcpkg-manifest-install.log
+Aura-FLUX/
 
 # IDE
 .vscode/

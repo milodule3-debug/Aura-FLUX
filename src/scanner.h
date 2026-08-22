@@ -115,11 +115,23 @@ inline std::string get_power_profile() {
     }
 
     close(pipefd[0]);
+
+    // Reap the child with a bounded retry loop.  The old code called
+    // waitpid(WNOHANG) then kill(SIGKILL) then waitpid(0) — if the child
+    // was already reaped by the first call the second waitpid could block
+    // indefinitely on certain kernels / under D-Bus stalls, starving the
+    // render thread.  We now retry WNOHANG a bounded number of times.
     int status = 0;
     pid_t w = waitpid(pid, &status, WNOHANG);
     if (w == 0) {
         kill(pid, SIGKILL);
-        waitpid(pid, &status, 0);
+        for (int retry = 0; retry < 50; ++retry) {
+            w = waitpid(pid, &status, WNOHANG);
+            if (w != 0) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        // Last resort: blocking reap (child is SIGKILL'd, so this is near-instant).
+        if (w == 0) waitpid(pid, &status, 0);
     }
 
     while (!res.empty() && std::isspace(static_cast<unsigned char>(res.back()))) res.pop_back();

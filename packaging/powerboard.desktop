@@ -2,10 +2,11 @@
 Type=Application
 Version=1.0
 Name=Powerboard
-Comment=TUI Hardware & Power Monitor
-Comment[sr]=ТУИ монитор хардвера и потрошње струје
+GenericName=Hardware & Power Monitor
+Comment=TUI hardware, power, data center energy monitor & AI copilot
+Comment[sr]=ТУИ монитор хардвера, потрошње струје и АИ ко-пилот
 Icon=utilities-system-monitor
 Exec=powerboard
 Terminal=true
 Categories=System;Monitor;
-Keywords=monitor;power;gpu;cpu;system;
+Keywords=monitor;power;gpu;cpu;system;ai;vault;datacenter;a100;

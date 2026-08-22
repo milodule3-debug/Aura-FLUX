@@ -100,6 +100,10 @@ int main() {
         if (sqlite3_open(db_path.c_str(), &vault_db) == SQLITE_OK) {
             const char* sql = "CREATE TABLE IF NOT EXISTS clips (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT UNIQUE, created_at INTEGER NOT NULL);";
             sqlite3_exec(vault_db, sql, nullptr, nullptr, nullptr);
+            auto clips_init = get_clips(vault_db);
+            if (clips_init.empty()) {
+                add_clip(vault_db, "20K A100 GPU Cluster: 20,000 GPUs @ 280W (70% of 400W TDP) = 5.6MW IT draw. PUE 1.3 -> 7.28MW facility total. Yearly: 63.78M kWh @ $0.10/kWh = $6,378,000/year ($6.4M). Sources: NVIDIA A100 Spec, Uptime Institute PUE, U.S. EIA.");
+            }
         }
     }
 
@@ -265,12 +269,12 @@ int main() {
                 } else if (selected_opt_menu == 6) {
                     bg_threads.emplace_back([&screen]() {
                         run_balance_cores_privileged();
-                        screen.PostEvent(Event::Custom);
+                        safe_post_event(screen);
                     });
                 } else if (selected_opt_menu == 7) {
                     bg_threads.emplace_back([&screen]() {
                         run_drop_caches_privileged();
-                        screen.PostEvent(Event::Custom);
+                        safe_post_event(screen);
                     });
                 }
                 return true;
@@ -315,7 +319,7 @@ int main() {
                 }
             } else {
                 if (event == Event::ArrowDown) {
-                    selected_ai_menu = min(7, selected_ai_menu + 1);
+                    selected_ai_menu = min(8, selected_ai_menu + 1);
                     return true;
                 }
                 if (event == Event::ArrowUp) {
@@ -361,6 +365,9 @@ int main() {
                     } else if (selected_ai_menu == 7) {
                         system_prompt = "Translate the following text. If it is in Serbian (Cyrillic or Latin), translate it to English. If it is in English, translate it to Serbian Cyrillic. Maintain a high-quality, professional, contextually appropriate translation.";
                         user_prompt = clip_text;
+                    } else if (selected_ai_menu == 8) {
+                        system_prompt = "You are an expert AI infrastructure architect and data center economist. Provide a detailed technical and financial breakdown for operating a 20,000 NVIDIA A100 GPU cluster (TDP 400W, 70% load = 280W per GPU, PUE 1.3, 7.28 MW facility power, 63.78M kWh/year, at $0.10/kWh -> $6,378,000/year). Include energy efficiency, cooling, and operational considerations with citations (NVIDIA specs, Uptime Institute PUE, U.S. EIA).";
+                        user_prompt = "Provide full financial, power, and infrastructure analysis for running 20,000 A100 GPUs continuously for 1 year at $0.10/kWh and PUE 1.3.";
                     }
 
                     if (!user_prompt.empty()) {
@@ -369,7 +376,7 @@ int main() {
                             ai_thinking = true;
                             ai_response_text = "Thinking...";
                         }
-                        screen.PostEvent(Event::Custom);
+                        safe_post_event(screen);
 
                         bg_threads.emplace_back([ai_config_snapshot, system_prompt, user_prompt, &ai_response_text, &ai_thinking, &ai_mutex, &screen]() {
                             std::string response = run_ai_query(ai_config_snapshot, system_prompt, user_prompt);
@@ -378,7 +385,7 @@ int main() {
                                 ai_response_text = std::move(response);
                                 ai_thinking = false;
                             }
-                            screen.PostEvent(Event::Custom);
+                            safe_post_event(screen);
                         });
                     }
                     return true;
@@ -558,7 +565,7 @@ int main() {
                 last_opt_refresh = current_time;
             }
 
-            screen.PostEvent(Event::Custom);
+            safe_post_event(screen);
             this_thread::sleep_for(chrono::milliseconds(100));
         }
     });
@@ -729,6 +736,16 @@ int main() {
         double cos_x = cos(local_globe_angle_x);
         double sin_x = sin(local_globe_angle_x);
 
+        // Parallax starfield backdrop: two layers drifting behind the globe.
+        draw_starfield(globe_canvas, g_size, g_size, local_globe_angle_y,
+                       gradient_low, glow_color);
+
+        // Wireframe latitude/longitude mesh: adds 3D depth to the globe body.
+        draw_globe_grid(globe_canvas, cx_g, cy_g, r_globe,
+                        local_globe_angle_y, local_globe_angle_x,
+                        Color::Interpolate(0.6f, panel_bg, glow_color),
+                        Color::Interpolate(0.8f, panel_bg, gradient_low));
+
         // Draw spinning 3D network connections using pre-calculated static connections with depth-based coloring
         for (const auto& conn : globe_connections) {
             size_t i = conn.i;
@@ -895,13 +912,22 @@ int main() {
             if (localtime_r(&tt, &lt)) strftime(clock_buf, sizeof(clock_buf), "%H:%M:%S", &lt);
         }
 
+        // Live heartbeat pulse: rotating glyph proves the render loop is alive
+        // (if this stops spinning, the freeze is back).
+        const char* pulse_chars[] = {"●", "◉", "○", "◌"};
+        int pulse_idx = static_cast<int>(local_globe_angle_y * 2.0) & 3;
+        std::string pulse_glyph = std::string(" ") + pulse_chars[pulse_idx] + " ";
+        bool system_ok = local_metrics.cpu_temp < 85;
         auto status_resume = vbox({
-            text("  " + spaced(L("STATUS", "СТАТУС"))) | bold | color(primary_color),
+            hbox({ text(pulse_glyph) | color(system_ok ? success_color : danger_color) | bold,
+                   text(spaced(L("STATUS", "СТАТУС"))) | bold | color(primary_color) }),
             separator() | color(glow_color),
             side_row(L("Clock", "Сат"), clock_buf, primary_color),
             side_row(L("Draw", "Потрошња"), format_double(local_metrics.current_watts, 1) + " W", accent_color),
             side_row(L("Energy", "Енергија"), format_double(local_metrics.cumulative_kwh, 4) + " kWh", secondary_color),
-            side_row(L("System", "Систем"), L("Operational", "Оперативан"), success_color)
+            side_row(L("System", "Систем"),
+                     system_ok ? L("Operational", "Оперативан") : L("⚠ Throttling", "⚠ Грејање"),
+                     system_ok ? success_color : danger_color)
         });
 
         // Token Stats Section
@@ -937,6 +963,7 @@ int main() {
             Color line_col = (now_load > 75) ? danger_color : (now_load > 50) ? warning_color : primary_color;
             draw_flux_graph(cpu_canvas, local_cpu_load_history, graph.max_size, 100.0,
                             curve_w_px, curve_h_px, line_col, gradient_mid, &flux_pal);
+            draw_scanlines(cpu_canvas, curve_w_px, curve_h_px, local_globe_angle_y, line_col);
         }
 
         Elements cpu_grid_rows;
@@ -1000,6 +1027,7 @@ int main() {
             Color line_col = (pct_now > 0.85) ? danger_color : (pct_now > 0.65) ? warning_color : secondary_color;
             draw_flux_graph(memory_canvas, local_ram_history, graph.max_size, total_ram_safe,
                             mem_w_px, curve_h_px, line_col, gradient_mid, &flux_pal);
+            draw_scanlines(memory_canvas, mem_w_px, curve_h_px, local_globe_angle_y * 1.3, line_col);
         }
 
         double ram_pct = local_metrics.total_ram > 0
@@ -1025,6 +1053,7 @@ int main() {
             Color line_col = (now_w > 45) ? danger_color : (now_w > 30) ? warning_color : primary_color;
             draw_flux_graph(power_canvas, local_watt_history, graph.max_size, 60.0,
                             curve_w_px, curve_h_px, line_col, gradient_mid, &flux_pal);
+            draw_scanlines(power_canvas, curve_w_px, curve_h_px, local_globe_angle_y * 0.7, line_col);
         }
 
         auto power_draw_box = window(
@@ -1088,6 +1117,7 @@ int main() {
                             col3_w_px, net_h_px, gradient_mid, gradient_low, &dim_pal);
             draw_flux_graph(network_canvas, local_net_download_history, graph.max_size, peak,
                             col3_w_px, net_h_px, secondary_color, gradient_mid, &flux_pal);
+            draw_scanlines(network_canvas, col3_w_px, net_h_px, local_globe_angle_y * 1.8, secondary_color);
         }
 
         auto network_link_box = window(
@@ -1146,6 +1176,7 @@ int main() {
             Color gpu_col = (now_g > 75) ? danger_color : (now_g > 50) ? warning_color : secondary_color;
             draw_flux_graph(gpu_canvas, local_gpu_load_history, graph.max_size, 100.0,
                             col3_w_px, gpu_h_px, gpu_col, gradient_mid, &flux_pal);
+            draw_scanlines(gpu_canvas, col3_w_px, gpu_h_px, local_globe_angle_y * 0.5, gpu_col);
         }
 
         auto gpu_core_box = window(
@@ -1409,7 +1440,64 @@ int main() {
                     vault_rows.push_back(text(prefix + s) | color(col) | bold);
                 }
             }
-            auto vault_box = window(text("  " + L("CLIPBOARD CORES [ArrowLeft]", "СЕФ КЛИПБОРД БЕЛЕЖНИЦА") + "  ") | bold, vbox(move(vault_rows))) | color(border_color) | size(WIDTH, EQUAL, 42);
+            auto vault_box = window(text("  " + L("CLIPBOARD CORES [ArrowLeft]", "СЕФ КЛИПБОРД БЕЛЕЖНИЦА") + "  ") | bold, vbox(move(vault_rows)) | vscroll_indicator | frame) | color(border_color) | size(HEIGHT, EQUAL, 10);
+
+            auto datacenter_box = window(text("  " + L("20K A100 GPU ENERGY & COST MODEL", "МОДЕЛ ПОТРОШЊЕ 20.000 A100 GPU-ОВА") + "  ") | bold, vbox({
+                hbox({
+                    text(" " + L("GPU Cluster Scale:", "Скала кластера:") + " ") | color(Color::GrayLight),
+                    filler(),
+                    text("20,000 × A100") | bold | color(accent_color)
+                }),
+                hbox({
+                    text(" " + L("GPU TDP / Avg Draw:", "TDP / Просечна снага:") + " ") | color(Color::GrayLight),
+                    filler(),
+                    text("400W / 280W (70%)") | bold | color(primary_color)
+                }),
+                hbox({
+                    text(" " + L("IT Cluster Power:", "ИТ снага кластера:") + " ") | color(Color::GrayLight),
+                    filler(),
+                    text("5.60 MW (5,600 kW)") | bold | color(primary_color)
+                }),
+                hbox({
+                    text(" " + L("Data Center PUE:", "PUE датацентра:") + " ") | color(Color::GrayLight),
+                    filler(),
+                    text("1.30 (Overhead)") | bold | color(secondary_color)
+                }),
+                hbox({
+                    text(" " + L("Total Facility Power:", "Укупна снага објекта:") + " ") | color(Color::GrayLight),
+                    filler(),
+                    text("7.28 MW") | bold | color(accent_color)
+                }),
+                separator(),
+                hbox({
+                    text(" " + L("Yearly Energy (8,760h):", "Годишња енергија:") + " ") | color(Color::GrayLight),
+                    filler(),
+                    text("63,780,000 kWh") | bold | color(success_color)
+                }),
+                hbox({
+                    text(" " + L("Electricity Rate:", "Цена kWh (U.S. EIA):") + " ") | color(Color::GrayLight),
+                    filler(),
+                    text("$0.10 / kWh") | bold | color(Color::White)
+                }),
+                separator(),
+                hbox({
+                    text(" " + L("Annual Cost:", "Годишњи трошак:") + " ") | bold | color(Color::White),
+                    filler(),
+                    text("$6,378,000 / yr") | bold | color(Color::RGB(0, 255, 128))
+                }),
+                hbox({
+                    text(" " + L("Cost Breakdown:", "Расподела трошка:") + " ") | color(Color::GrayDark),
+                    filler(),
+                    text("$531.5K/mo · $17.5K/day") | color(Color::GrayLight)
+                }),
+                separator(),
+                text(" " + L("Sources & Citations:", "Извори и референце:") + " ") | bold | color(glow_color),
+                text(" • " + L("NVIDIA A100 Tech Specs / Reviews (400W)", "NVIDIA A100 Спецификација / Тестови (400W)")) | color(Color::GrayDark),
+                text(" • " + L("Uptime Institute (Data Center PUE 1.30)", "Uptime Institute (PUE просек 1.30)")) | color(Color::GrayDark),
+                text(" • " + L("U.S. EIA (Industrial Electric Rate $0.10/kWh)", "U.S. EIA (Индустријска цена $0.10/kWh)")) | color(Color::GrayDark)
+            }) | frame) | color(border_color) | flex;
+
+            auto left_pane = vbox(vault_box, datacenter_box) | size(WIDTH, EQUAL, 46);
 
             auto make_ai_input_row = [&](int idx, const string& label, const string& val) -> Element {
                 bool is_sel = (idx == selected_ai_menu) && (vault_focus_pane == 1);
@@ -1457,13 +1545,15 @@ int main() {
                 separator(),
                 make_recipe_row(6, L("AI Recipe: Audit Code Clip", "АИ Рецепт: Ревидирај програмски код")),
                 separator(),
-                make_recipe_row(7, L("AI Recipe: Translate SRB/ENG", "АИ Рецепт: Преведи српски/енглески"))
+                make_recipe_row(7, L("AI Recipe: Translate SRB/ENG", "АИ Рецепт: Преведи српски/енглески")),
+                separator(),
+                make_recipe_row(8, L("AI Recipe: 20K A100 Datacenter Cost", "АИ Рецепт: Анализа трошкова 20K A100"))
             );
 
-            auto ai_config_box = window(text("  " + L("AURA AI COPILOT [ArrowRight]", "КОНФИГУРАЦИЈА АИ-ја") + "  ") | bold, ai_inputs) | color(border_color) | size(HEIGHT, EQUAL, 21);
+            auto ai_config_box = window(text("  " + L("AURA AI COPILOT [ArrowRight]", "КОНФИГУРАЦИЈА АИ-ја") + "  ") | bold, ai_inputs) | color(border_color) | size(HEIGHT, EQUAL, 23);
 
             Elements resp_wrapped;
-            size_t max_char = right_w - 46;
+            size_t max_char = right_w > 50 ? right_w - 50 : 30;
             string current_word;
             size_t line_len = 0;
             for (char c : local_ai_response_text) {
@@ -1490,7 +1580,7 @@ int main() {
 
             auto ai_response_box = window(text("  " + L("CO-PILOT ANSWERS FEED", "ОДГОВОРИ АИ КО-ПИЛОТА") + "  ") | bold, vbox(move(resp_wrapped)) | vscroll_indicator | frame) | color(border_color) | flex;
 
-            right_panel = vbox(header, hbox(vault_box, vbox(ai_config_box, ai_response_box) | flex) | flex);
+            right_panel = vbox(header, hbox(left_pane, vbox(ai_config_box, ai_response_box) | flex) | flex);
         }
 
         auto footer = hbox({

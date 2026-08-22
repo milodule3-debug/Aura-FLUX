@@ -11,6 +11,8 @@
 #include <unistd.h>
 #include <mutex>
 #include "types.h"
+#include "utils.h"
+#include "ftxui/component/screen_interactive.hpp"
 
 namespace fs = std::filesystem;
 
@@ -58,7 +60,7 @@ inline void run_cpu_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_pct = 5;
         r.progress_label = "Running single-core burn...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     double cpu_single_mops = cpu_burn_cpp(1.2);
 
@@ -70,7 +72,7 @@ inline void run_cpu_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.cpu_threads = cpu_threads;
         r.progress_label = "Running multi-core burn (" + std::to_string(cpu_threads) + " threads)...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     std::vector<std::thread> pool;
     std::vector<double> scores(cpu_threads, 0.0);
@@ -92,7 +94,7 @@ inline void run_cpu_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_label = "CPU benchmark done!";
         r.cpu_running = false;
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 }
 
 inline void run_mem_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen, std::mutex* bench_mutex = nullptr) {
@@ -101,7 +103,7 @@ inline void run_mem_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_pct = 10;
         r.progress_label = "Allocating 256 MB buffer...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     size_t N = 16 * 1024 * 1024;
     double bytes = static_cast<double>(N * 8);
@@ -113,7 +115,7 @@ inline void run_mem_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_pct = 30;
         r.progress_label = "Running write pass...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     auto t0 = std::chrono::high_resolution_clock::now();
     for (size_t i = 0; i < N; ++i) {
@@ -129,7 +131,7 @@ inline void run_mem_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_pct = 60;
         r.progress_label = "Running read pass...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     t0 = std::chrono::high_resolution_clock::now();
     uint64_t sum = 0;
@@ -146,7 +148,7 @@ inline void run_mem_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_pct = 80;
         r.progress_label = "Running copy pass...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     t0 = std::chrono::high_resolution_clock::now();
     std::copy(a.begin(), a.end(), b.begin());
@@ -161,7 +163,7 @@ inline void run_mem_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_label = "Memory benchmark done!";
         r.mem_running = false;
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 }
 
 inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen, std::mutex* bench_mutex = nullptr) {
@@ -170,7 +172,7 @@ inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& scree
         r.progress_pct = 10;
         r.progress_label = "Preparing write buffer (192 MB)...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     size_t block_size = 8 * 1024 * 1024;
     size_t num_blocks = 24;
@@ -185,7 +187,7 @@ inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& scree
             r.progress_label = "Error: HOME not set";
             r.disk_running = false;
         });
-        screen.PostEvent(ftxui::Event::Custom);
+        safe_post_event(screen);
         return;
     }
     std::string home(home_c);
@@ -196,7 +198,7 @@ inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& scree
         r.progress_pct = 20;
         r.progress_label = "Writing blocks...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     auto t0 = std::chrono::high_resolution_clock::now();
     std::ofstream f(path, std::ios::binary);
@@ -205,7 +207,7 @@ inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& scree
             r.progress_label = "Disk error: could not write file";
             r.disk_running = false;
         });
-        screen.PostEvent(ftxui::Event::Custom);
+        safe_post_event(screen);
         return;
     }
 
@@ -215,7 +217,7 @@ inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& scree
         update_bench(res, bench_mutex, [&](BenchmarkResults& r) {
             r.progress_pct = progress_pct;
         });
-        screen.PostEvent(ftxui::Event::Custom);
+        safe_post_event(screen);
     }
     f.flush();
     int fd = open(path.c_str(), O_WRONLY);
@@ -232,7 +234,7 @@ inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& scree
         r.progress_pct = 60;
         r.progress_label = "Reading blocks...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     t0 = std::chrono::high_resolution_clock::now();
     std::ifstream f_in(path, std::ios::binary);
@@ -241,7 +243,7 @@ inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& scree
             r.progress_label = "Disk error: could not read file";
             r.disk_running = false;
         });
-        screen.PostEvent(ftxui::Event::Custom);
+        safe_post_event(screen);
         return;
     }
     std::vector<uint8_t> read_buf(block_size);
@@ -262,7 +264,7 @@ inline void run_disk_test(BenchmarkResults& res, ftxui::ScreenInteractive& scree
         r.progress_label = "Disk benchmark done!";
         r.disk_running = false;
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 }
 
 inline void run_llm_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen, std::mutex* bench_mutex = nullptr) {
@@ -271,7 +273,7 @@ inline void run_llm_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_pct = 10;
         r.progress_label = "Measuring memory copy bandwidth...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     run_mem_test(res, screen, bench_mutex);
 
@@ -293,7 +295,7 @@ inline void run_llm_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_pct = 70;
         r.progress_label = "Probing local Ollama and LM Studio...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     std::string ollama_status = "OFFLINE";
     FILE* p_ollama = popen("curl -s -m 2 -H \"User-Agent: Aura-Pulse/0.3.0\" http://127.0.0.1:11434/api/tags 2>/dev/null", "r");
@@ -331,7 +333,7 @@ inline void run_llm_test(BenchmarkResults& res, ftxui::ScreenInteractive& screen
         r.progress_label = "LLM estimator done!";
         r.llm_running = false;
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 }
 
 inline void probe_local_servers(BenchmarkResults& res, ftxui::ScreenInteractive& screen, std::mutex* bench_mutex = nullptr) {
@@ -339,7 +341,7 @@ inline void probe_local_servers(BenchmarkResults& res, ftxui::ScreenInteractive&
         r.progress_pct = 50;
         r.progress_label = "Probing local API servers...";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 
     std::string ollama_status = "OFFLINE";
     FILE* p_ollama = popen("curl -s -m 2 -H \"User-Agent: Aura-Pulse/0.3.0\" http://127.0.0.1:11434/api/tags 2>/dev/null", "r");
@@ -373,5 +375,5 @@ inline void probe_local_servers(BenchmarkResults& res, ftxui::ScreenInteractive&
         r.progress_pct = 100;
         r.progress_label = "Probes completed!";
     });
-    screen.PostEvent(ftxui::Event::Custom);
+    safe_post_event(screen);
 }

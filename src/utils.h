@@ -3,9 +3,18 @@
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include <random>
 #include "types.h"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/dom/canvas.hpp"
+#include "ftxui/component/screen_interactive.hpp"
+
+// Race-free screen wake: routes a no-op through FTXUI's internally-locked
+// task queue instead of copying the static Event::Custom object (which races
+// with the main loop's MultiReceiverBuffer and eventually deadlocks).
+inline void safe_post_event(ftxui::ScreenInteractive& screen) {
+    screen.Post([] {});
+}
 
 inline std::string format_double(double val, int precision) {
     std::ostringstream oss;
@@ -175,4 +184,152 @@ inline void draw_flux_graph(ftxui::Canvas& canvas, const std::vector<double>& hi
 // Usage: L("English text", "Српски текст")
 inline std::string L(const std::string& en, const std::string& sr, Theme current_theme) {
     return (current_theme == SRBIJA) ? sr : en;
+}
+
+// ===========================================================================
+// GRAPHICS ENHANCEMENTS
+// ===========================================================================
+
+// Deterministic PRNG seeded once, reused across frames for stable starfield.
+inline std::mt19937& rng_engine() {
+    static std::mt19937 gen(42);
+    return gen;
+}
+
+// Draw a parallax starfield into the globe canvas background.
+// Two layers: distant (dim, slow) and near (bright, fast), all drifting.
+inline void draw_starfield(ftxui::Canvas& c, int w, int /*h*/, double t,
+                           ftxui::Color deep, ftxui::Color near_col) {
+    // Pre-computed star positions (fixed seed = stable layout).
+    // 18 distant stars, 10 near stars.
+    static const int star_tbl[][3] = {
+        {3,5,0}, {12,3,0}, {22,7,0}, {31,2,0}, {40,6,0}, {48,1,0},
+        {6,11,0}, {17,9,0}, {27,12,0}, {37,8,0}, {45,11,0}, {52,5,0},
+        {8,1,0}, {25,4,0}, {44,3,0}, {2,9,0}, {35,13,0}, {50,10,0},
+        {5,3,1}, {20,6,1}, {33,4,1}, {42,9,1}, {15,11,1},
+        {49,7,1}, {10,8,1}, {29,1,1}, {38,12,1}, {24,10,1}
+    };
+    for (const auto& s : star_tbl) {
+        int base_x = s[0], base_y = s[1], layer = s[2];
+        if (layer == 0) {
+            // Distant stars: very slow horizontal drift, subtle twinkle.
+            int x = (base_x + static_cast<int>(t * 0.3)) % w;
+            if (x < 0) x += w;
+            double twinkle = 0.6 + 0.4 * sin(t * 0.8 + base_x * 1.7);
+            auto col = ftxui::Color::Interpolate(static_cast<float>(1.0 - twinkle),
+                                                 ftxui::Color::Black, deep);
+            c.DrawPoint(x, base_y, true, col);
+        } else {
+            // Near stars: faster drift, brighter, small cross sparkle.
+            int x = (base_x + static_cast<int>(t * 0.8)) % w;
+            if (x < 0) x += w;
+            double twinkle = 0.5 + 0.5 * sin(t * 1.5 + base_x);
+            auto col = ftxui::Color::Interpolate(static_cast<float>(1.0 - twinkle),
+                                                 ftxui::Color::Black, near_col);
+            c.DrawPoint(x, base_y, true, col);
+            if (twinkle > 0.75) {
+                c.DrawPoint(x + 1, base_y, true, col);
+                c.DrawPoint(x, base_y + 1, true, col);
+            }
+        }
+    }
+}
+
+// Draw a wireframe latitude/longitude grid on the projected globe points.
+// This adds a 3D mesh feel. Called AFTER globe points are projected.
+struct ProjectedPoint { int sx, sy; double depth; };
+
+inline void draw_globe_grid(ftxui::Canvas& c, double cx, double cy, double r,
+                            double angle_y, double angle_x,
+                            ftxui::Color grid_col, ftxui::Color grid_dim) {
+    // 6 latitude rings, 8 longitude meridians.
+    for (int lat = 0; lat < 6; ++lat) {
+        double phi = (lat + 0.5) / 6.0 * M_PI;  // 0..PI
+        double ring_r = sin(phi);
+        double ring_z_base = cos(phi);
+        int prev_sx = -1, prev_sy = -1;
+        for (int lon = 0; lon <= 32; ++lon) {
+            double theta = lon / 32.0 * 2.0 * M_PI;
+            double x0 = ring_r * cos(theta);
+            double y0 = ring_r * sin(theta);
+            double z0 = ring_z_base;
+
+            // Y rotation
+            double x1 = x0 * cos(angle_y) + z0 * sin(angle_y);
+            double z1 = -x0 * sin(angle_y) + z0 * cos(angle_y);
+            // X rotation
+            double y2 = y0 * cos(angle_x) - z1 * sin(angle_x);
+            double z2 = y0 * sin(angle_x) + z1 * cos(angle_x);
+
+            int sx = static_cast<int>(cx + x1 * r);
+            int sy = static_cast<int>(cy + y2 * r);
+
+            if (prev_sx >= 0) {
+                auto col = (z2 > 0) ? grid_col : grid_dim;
+                c.DrawPointLine(prev_sx, prev_sy, sx, sy, col);
+            }
+            prev_sx = sx; prev_sy = sy;
+        }
+    }
+    // Longitude meridians
+    for (int lon = 0; lon < 8; ++lon) {
+        double theta = lon / 8.0 * 2.0 * M_PI;
+        double mx0 = cos(theta);
+        double mz0 = sin(theta);
+        int prev_sx = -1, prev_sy = -1;
+        for (int lat = 0; lat <= 24; ++lat) {
+            double phi = lat / 24.0 * M_PI;
+            double x0 = sin(phi) * mx0;
+            double y0 = cos(phi);
+            double z0 = sin(phi) * mz0;
+
+            double x1 = x0 * cos(angle_y) + z0 * sin(angle_y);
+            double z1 = -x0 * sin(angle_y) + z0 * cos(angle_y);
+            double y2 = y0 * cos(angle_x) - z1 * sin(angle_x);
+            double z2 = y0 * sin(angle_x) + z1 * cos(angle_x);
+
+            int sx = static_cast<int>(cx + x1 * r);
+            int sy = static_cast<int>(cy + y2 * r);
+
+            if (prev_sx >= 0) {
+                auto col = (z2 > 0) ? grid_col : grid_dim;
+                c.DrawPointLine(prev_sx, prev_sy, sx, sy, col);
+            }
+            prev_sx = sx; prev_sy = sy;
+        }
+    }
+}
+
+// Draw animated scanline overlay on a flux graph canvas.
+// A horizontal sweep line moves up and down, plus subtle CRT noise dots.
+inline void draw_scanlines(ftxui::Canvas& c, int w, int h, double t,
+                           ftxui::Color scan_col) {
+    // Sweeping scan line: bounces between top and bottom.
+    double phase = (sin(t * 0.6) + 1.0) * 0.5;  // 0..1
+    int scan_y = static_cast<int>(phase * (h - 3)) + 1;
+    auto dim_scan = ftxui::Color::Interpolate(0.7f, ftxui::Color::Black, scan_col);
+    for (int x = 0; x < w; ++x) {
+        c.DrawPoint(x, scan_y, true, dim_scan);
+    }
+    // Faint glow line one pixel above.
+    auto faint = ftxui::Color::Interpolate(0.85f, ftxui::Color::Black, scan_col);
+    if (scan_y > 1) {
+        for (int x = 0; x < w; ++x) {
+            c.DrawPoint(x, scan_y - 1, true, faint);
+        }
+    }
+}
+
+// Draw a pulsing border frame around a canvas region using dim characters.
+// Creates an animated "energy field" effect.
+inline void draw_pulse_border(ftxui::Canvas& c, int w, int h, double t,
+                              ftxui::Color border_col) {
+    double pulse = 0.5 + 0.5 * sin(t * 2.0);
+    auto col = ftxui::Color::Interpolate(static_cast<float>(0.5 - pulse * 0.3),
+                                         ftxui::Color::Black, border_col);
+    // Corner accent pixels — pulse in brightness.
+    c.DrawPoint(0, 0, true, col);
+    c.DrawPoint(w - 1, 0, true, col);
+    c.DrawPoint(0, h - 1, true, col);
+    c.DrawPoint(w - 1, h - 1, true, col);
 }
