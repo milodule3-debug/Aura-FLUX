@@ -113,6 +113,7 @@ int main() {
     int selected_ai_menu = 0;
     int vault_focus_pane = 1; // 0: Vault (Top Left), 1: Live Calculator (Bottom Left), 2: AI Settings (Right)
     GpuCalcState gpu_calc;
+    bool calc_first_digit = true;
     string custom_question;
     string ai_response_text = "Select a clipboard item on the left, configure your AI provider on the right, or use the live GPU datacenter calculator.";
     bool ai_thinking = false;
@@ -158,10 +159,8 @@ int main() {
         if (event == Event::Custom) return true;
         string input = event.input();
 
-        // Detect if user is actively typing in a text field (Tab 3 text boxes or AI config)
-        bool in_text_input = (current_tab.load() == 3 &&
-                              ((vault_focus_pane == 1 && gpu_calc.selected_field >= 1 && gpu_calc.selected_field <= 4) ||
-                               (vault_focus_pane == 2 && (selected_ai_menu == 1 || selected_ai_menu == 2 || selected_ai_menu == 3))));
+        // Detect if user is actively typing in a text field (Tab 3 has its own dedicated input handlers)
+        bool in_text_input = (current_tab.load() == 3);
 
         // Global Tab Navigation — use FTXUI event constants for function keys
         if (event == Event::F1) { current_tab.store(0); return true; }
@@ -284,21 +283,15 @@ int main() {
         }
         // --- TAB 3: CLIPBOARD VAULT & AI ENRICHMENT & LIVE GPU CALCULATOR ---
         else if (current_tab == 3) {
-            // Global pane navigation
+            // Global pane navigation (Tab and Shift-Tab exclusively)
             if (event == Event::Tab || input == "\t") {
                 vault_focus_pane = (vault_focus_pane + 1) % 3;
+                calc_first_digit = true;
                 return true;
             }
             if (event == Event::TabReverse) {
                 vault_focus_pane = (vault_focus_pane + 2) % 3;
-                return true;
-            }
-            if (event == Event::ArrowRight && vault_focus_pane != 2) {
-                vault_focus_pane = 2;
-                return true;
-            }
-            if (event == Event::ArrowLeft && vault_focus_pane == 2) {
-                vault_focus_pane = 1;
+                calc_first_digit = true;
                 return true;
             }
 
@@ -307,6 +300,7 @@ int main() {
                 if (event == Event::ArrowDown) {
                     if (selected_vault_idx == 14) {
                         vault_focus_pane = 1;
+                        calc_first_digit = true;
                     } else {
                         selected_vault_idx = min(14, selected_vault_idx + 1);
                     }
@@ -338,6 +332,7 @@ int main() {
             else if (vault_focus_pane == 1) {
                 if (event == Event::ArrowDown) {
                     gpu_calc.selected_field = min(6, gpu_calc.selected_field + 1);
+                    calc_first_digit = true;
                     return true;
                 }
                 if (event == Event::ArrowUp) {
@@ -346,13 +341,15 @@ int main() {
                     } else {
                         gpu_calc.selected_field = max(0, gpu_calc.selected_field - 1);
                     }
+                    calc_first_digit = true;
                     return true;
                 }
 
-                // Preset direct hotkeys 1-4 (when not typing in count/load/pue/price, or when focused on presets)
+                // Preset direct hotkeys 1-4
                 if (gpu_calc.selected_field == 0 || gpu_calc.selected_field == 5 || gpu_calc.selected_field == 6) {
                     if (input == "1" || input == "2" || input == "3" || input == "4") {
                         gpu_calc.apply_preset(input[0] - '0');
+                        calc_first_digit = true;
                         return true;
                     }
                 }
@@ -375,98 +372,133 @@ int main() {
                 else if (gpu_calc.selected_field == 1) {
                     // GPU Count - direct typing / backspace / stepping
                     if (input.size() == 1 && std::isdigit(input[0])) {
-                        if (gpu_calc.count_str == "0") gpu_calc.count_str.clear();
+                        if (calc_first_digit || gpu_calc.count_str == "0") {
+                            gpu_calc.count_str.clear();
+                            calc_first_digit = false;
+                        }
                         gpu_calc.count_str += input[0];
                         if (gpu_calc.count_str.size() > 7) gpu_calc.count_str = gpu_calc.count_str.substr(0, 7);
                         gpu_calc.gpu_count = std::max(1, std::atoi(gpu_calc.count_str.c_str()));
                         return true;
                     } else if (event == Event::Backspace) {
+                        calc_first_digit = false;
                         if (!gpu_calc.count_str.empty()) gpu_calc.count_str.pop_back();
-                        gpu_calc.gpu_count = gpu_calc.count_str.empty() ? 1 : std::max(1, std::atoi(gpu_calc.count_str.c_str()));
+                        gpu_calc.gpu_count = gpu_calc.count_str.empty() ? 0 : std::max(1, std::atoi(gpu_calc.count_str.c_str()));
                         return true;
                     } else if (is_inc) {
-                        int delta = (gpu_calc.gpu_count >= 10000) ? 1000 : (gpu_calc.gpu_count >= 1000) ? 500 : (gpu_calc.gpu_count >= 100) ? 100 : 10;
-                        gpu_calc.gpu_count = min(1000000, gpu_calc.gpu_count + delta);
+                        calc_first_digit = false;
+                        int delta = (gpu_calc.gpu_count >= 10000) ? 1000 : (gpu_calc.gpu_count >= 1000) ? 500 : (gpu_calc.gpu_count >= 100) ? 100 : (gpu_calc.gpu_count >= 10) ? 5 : 1;
+                        gpu_calc.gpu_count = min(10000000, gpu_calc.gpu_count + delta);
                         gpu_calc.count_str = to_string(gpu_calc.gpu_count);
                         return true;
                     } else if (is_dec) {
-                        int delta = (gpu_calc.gpu_count > 10000) ? 1000 : (gpu_calc.gpu_count > 1000) ? 500 : (gpu_calc.gpu_count > 100) ? 100 : 10;
+                        calc_first_digit = false;
+                        int delta = (gpu_calc.gpu_count > 10000) ? 1000 : (gpu_calc.gpu_count > 1000) ? 500 : (gpu_calc.gpu_count > 100) ? 100 : (gpu_calc.gpu_count > 10) ? 5 : 1;
                         gpu_calc.gpu_count = max(1, gpu_calc.gpu_count - delta);
                         gpu_calc.count_str = to_string(gpu_calc.gpu_count);
                         return true;
                     } else if (event == Event::Return) {
-                        if (gpu_calc.gpu_count == 1) gpu_calc.gpu_count = 8;
-                        else if (gpu_calc.gpu_count == 8) gpu_calc.gpu_count = 64;
-                        else if (gpu_calc.gpu_count == 64) gpu_calc.gpu_count = 1000;
-                        else if (gpu_calc.gpu_count == 1000) gpu_calc.gpu_count = 20000;
-                        else if (gpu_calc.gpu_count == 20000) gpu_calc.gpu_count = 100000;
-                        else gpu_calc.gpu_count = 1;
-                        gpu_calc.count_str = to_string(gpu_calc.gpu_count);
+                        if (gpu_calc.gpu_count < 1) { gpu_calc.gpu_count = 1; gpu_calc.count_str = "1"; }
+                        gpu_calc.selected_field = 2;
+                        calc_first_digit = true;
                         return true;
                     }
                 }
                 else if (gpu_calc.selected_field == 2) {
                     // Average Load %
                     if (input.size() == 1 && std::isdigit(input[0])) {
+                        if (calc_first_digit || gpu_calc.load_str == "0") {
+                            gpu_calc.load_str.clear();
+                            calc_first_digit = false;
+                        }
                         gpu_calc.load_str += input[0];
                         if (gpu_calc.load_str.size() > 3) gpu_calc.load_str = gpu_calc.load_str.substr(0, 3);
                         gpu_calc.load_pct = std::clamp(std::atof(gpu_calc.load_str.c_str()), 1.0, 100.0);
                         return true;
                     } else if (event == Event::Backspace) {
+                        calc_first_digit = false;
                         if (!gpu_calc.load_str.empty()) gpu_calc.load_str.pop_back();
                         gpu_calc.load_pct = gpu_calc.load_str.empty() ? 10.0 : std::clamp(std::atof(gpu_calc.load_str.c_str()), 1.0, 100.0);
                         return true;
                     } else if (is_inc) {
+                        calc_first_digit = false;
                         gpu_calc.load_pct = min(100.0, gpu_calc.load_pct + 5.0);
                         char b[16]; std::snprintf(b, sizeof(b), "%.0f", gpu_calc.load_pct); gpu_calc.load_str = b;
                         return true;
                     } else if (is_dec) {
+                        calc_first_digit = false;
                         gpu_calc.load_pct = max(5.0, gpu_calc.load_pct - 5.0);
                         char b[16]; std::snprintf(b, sizeof(b), "%.0f", gpu_calc.load_pct); gpu_calc.load_str = b;
+                        return true;
+                    } else if (event == Event::Return) {
+                        gpu_calc.selected_field = 3;
+                        calc_first_digit = true;
                         return true;
                     }
                 }
                 else if (gpu_calc.selected_field == 3) {
                     // PUE Overhead
                     if (input.size() == 1 && (std::isdigit(input[0]) || input[0] == '.')) {
+                        if (calc_first_digit) {
+                            gpu_calc.pue_str.clear();
+                            calc_first_digit = false;
+                        }
                         if (input[0] == '.' && gpu_calc.pue_str.find('.') != string::npos) return true;
                         gpu_calc.pue_str += input[0];
                         if (gpu_calc.pue_str.size() > 4) gpu_calc.pue_str = gpu_calc.pue_str.substr(0, 4);
                         gpu_calc.pue = std::clamp(std::atof(gpu_calc.pue_str.c_str()), 1.0, 3.0);
                         return true;
                     } else if (event == Event::Backspace) {
+                        calc_first_digit = false;
                         if (!gpu_calc.pue_str.empty()) gpu_calc.pue_str.pop_back();
                         gpu_calc.pue = gpu_calc.pue_str.empty() ? 1.0 : std::clamp(std::atof(gpu_calc.pue_str.c_str()), 1.0, 3.0);
                         return true;
                     } else if (is_inc) {
+                        calc_first_digit = false;
                         gpu_calc.pue = min(3.00, gpu_calc.pue + 0.05);
                         char b[16]; std::snprintf(b, sizeof(b), "%.2f", gpu_calc.pue); gpu_calc.pue_str = b;
                         return true;
                     } else if (is_dec) {
+                        calc_first_digit = false;
                         gpu_calc.pue = max(1.00, gpu_calc.pue - 0.05);
                         char b[16]; std::snprintf(b, sizeof(b), "%.2f", gpu_calc.pue); gpu_calc.pue_str = b;
+                        return true;
+                    } else if (event == Event::Return) {
+                        gpu_calc.selected_field = 4;
+                        calc_first_digit = true;
                         return true;
                     }
                 }
                 else if (gpu_calc.selected_field == 4) {
                     // Electricity Rate $/kWh
                     if (input.size() == 1 && (std::isdigit(input[0]) || input[0] == '.')) {
+                        if (calc_first_digit) {
+                            gpu_calc.price_str.clear();
+                            calc_first_digit = false;
+                        }
                         if (input[0] == '.' && gpu_calc.price_str.find('.') != string::npos) return true;
                         gpu_calc.price_str += input[0];
                         if (gpu_calc.price_str.size() > 5) gpu_calc.price_str = gpu_calc.price_str.substr(0, 5);
                         gpu_calc.price_kwh = std::clamp(std::atof(gpu_calc.price_str.c_str()), 0.001, 2.0);
                         return true;
                     } else if (event == Event::Backspace) {
+                        calc_first_digit = false;
                         if (!gpu_calc.price_str.empty()) gpu_calc.price_str.pop_back();
                         gpu_calc.price_kwh = gpu_calc.price_str.empty() ? 0.01 : std::clamp(std::atof(gpu_calc.price_str.c_str()), 0.001, 2.0);
                         return true;
                     } else if (is_inc) {
+                        calc_first_digit = false;
                         gpu_calc.price_kwh = min(2.00, gpu_calc.price_kwh + 0.01);
                         char b[16]; std::snprintf(b, sizeof(b), "%.2f", gpu_calc.price_kwh); gpu_calc.price_str = b;
                         return true;
                     } else if (is_dec) {
+                        calc_first_digit = false;
                         gpu_calc.price_kwh = max(0.01, gpu_calc.price_kwh - 0.01);
                         char b[16]; std::snprintf(b, sizeof(b), "%.2f", gpu_calc.price_kwh); gpu_calc.price_str = b;
+                        return true;
+                    } else if (event == Event::Return) {
+                        gpu_calc.selected_field = 5;
+                        calc_first_digit = true;
                         return true;
                     }
                 }
@@ -476,6 +508,7 @@ int main() {
                         static int curr_p = 1;
                         curr_p = (curr_p % 4) + 1;
                         gpu_calc.apply_preset(curr_p);
+                        calc_first_digit = true;
                         return true;
                     }
                 }
@@ -1652,9 +1685,14 @@ int main() {
                 auto val_col = is_sel ? accent_color : Color::RGB(220, 220, 220);
                 auto bg_col = is_sel ? Color::RGB(25, 30, 45) : Color::Default;
 
+                std::string val_with_cursor = display_val;
+                if (is_sel && f_idx >= 1 && f_idx <= 4) {
+                    val_with_cursor += "_";
+                }
+
                 return vbox({
                     hbox({
-                        text(is_sel ? " ⚙ " : "   ") | bold | color(title_col),
+                        text(is_sel ? " ▶ " : "   ") | bold | color(title_col),
                         text(label) | bold | color(title_col),
                         filler(),
                         text(key_hint) | color(is_sel ? secondary_color : Color::GrayDark)
@@ -1663,7 +1701,7 @@ int main() {
                         text("   "),
                         hbox({
                             text(is_sel ? " ▌ " : "   ") | bold | color(primary_color),
-                            text(display_val) | bold | color(val_col),
+                            text(val_with_cursor) | bold | color(val_col),
                             filler(),
                             text(sub_info.empty() ? "" : (" (" + sub_info + ") ")) | color(Color::GrayLight)
                         }) | borderRounded | color(box_border_col) | bgcolor(bg_col) | flex
