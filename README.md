@@ -52,7 +52,21 @@ cmake --build build -j$(nproc)
 
 ## Screenshots
 
-Screenshots of diagnostics, benchmarks, and vault/AI views in `assets/`.
+### Main Dashboard - Diagnostics
+![Diagnostics](assets/diagnostics.png)
+*Real-time telemetry with CPU frequency, temperature, load metrics, and system information*
+
+### Benchmarking & Testing
+![Benchmarks](assets/benchmarks.png)
+*Hardware benchmark results and comprehensive system testing interface*
+
+### Vault & Clipboard Manager
+![Vault](assets/vault.png)
+*Smart clipboard manager with AI integration and co-pilot answers*
+
+### Full System Overview
+![Powerboard](assets/powerboard.png)
+*Complete system monitoring dashboard with all metrics at a glance*
 
 ## Architecture
 
