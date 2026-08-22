@@ -52,7 +52,29 @@ cmake --build build -j$(nproc)
 
 ## Screenshots
 
-Screenshots of diagnostics, benchmarks, and vault/AI views in `assets/`.
+### Diagnostics Dashboard
+![Diagnostics](assets/diagnostics.png)
+*Real-time telemetry with CPU frequency, temperature, load metrics, and system information*
+
+### Testing & Benchmarks
+![Testing](assets/testing.png)
+*CPU benchmark results and stress testing interface with performance metrics*
+
+### Optimization Settings
+![Optimization](assets/optimization.png)
+*System optimization modes with active performance tuning options and CPU turbo controls*
+
+### Vault & AI Integration
+![Vault & AI](assets/vault-ai.png)
+*Clipboard vault manager with AI copilot integration (Ollama-powered)*
+
+### Alternative Theme - Light Mode
+![Light Theme](assets/light-theme.png)
+*Powerboard with light color scheme showing real-time monitoring data*
+
+### Clipboard Vault Manager
+![Clipboard Vault](assets/clipboard-vault.png)
+*Smart clipboard manager with AI recipe suggestions and multi-provider support*
 
 ## Architecture
 
