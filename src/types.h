@@ -112,3 +112,114 @@ enum Theme {
 };
 
 constexpr double PRICE_PER_KWH = 0.15;
+
+struct GpuModelPreset {
+    std::string name;
+    int tdp_watts;
+};
+
+inline const std::vector<GpuModelPreset> GPU_PRESETS = {
+    {"NVIDIA A100 (400W)", 400},
+    {"NVIDIA H100 (700W)", 700},
+    {"NVIDIA H200 (700W)", 700},
+    {"NVIDIA B200 (1000W)", 1000},
+    {"NVIDIA RTX 4090 (450W)", 450},
+    {"NVIDIA RTX 3090 (350W)", 350},
+    {"Custom TDP", 300}
+};
+
+struct GpuCalcState {
+    int model_idx = 0;              // 0: A100 (400W)
+    int gpu_count = 20000;          // 20,000 GPUs
+    int custom_tdp = 400;           // TDP in Watts
+    double load_pct = 70.0;         // 70% average load
+    double pue = 1.30;              // 1.30 PUE
+    double price_kwh = 0.10;        // $0.10 / kWh
+    int selected_field = 0;         // 0: Model, 1: Count, 2: Load, 3: PUE, 4: Rate, 5: Presets, 6: Export
+
+    int get_tdp() const {
+        if (model_idx >= 0 && model_idx < static_cast<int>(GPU_PRESETS.size()) - 1) {
+            return GPU_PRESETS[model_idx].tdp_watts;
+        }
+        return custom_tdp;
+    }
+
+    std::string get_model_name() const {
+        if (model_idx >= 0 && model_idx < static_cast<int>(GPU_PRESETS.size()) - 1) {
+            return GPU_PRESETS[model_idx].name;
+        }
+        return "Custom (" + std::to_string(custom_tdp) + "W)";
+    }
+
+    double get_avg_watts_per_gpu() const {
+        return get_tdp() * (load_pct / 100.0);
+    }
+
+    double get_total_it_watts() const {
+        return gpu_count * get_avg_watts_per_gpu();
+    }
+
+    double get_facility_watts() const {
+        return get_total_it_watts() * pue;
+    }
+
+    double get_hourly_kwh() const {
+        return get_facility_watts() / 1000.0;
+    }
+
+    double get_daily_kwh() const {
+        return get_hourly_kwh() * 24.0;
+    }
+
+    double get_yearly_kwh() const {
+        return get_hourly_kwh() * 8760.0;
+    }
+
+    double get_yearly_cost() const {
+        return get_yearly_kwh() * price_kwh;
+    }
+
+    double get_monthly_cost() const {
+        return get_yearly_cost() / 12.0;
+    }
+
+    double get_daily_cost() const {
+        return get_yearly_cost() / 365.0;
+    }
+
+    double get_hourly_cost() const {
+        return get_hourly_kwh() * price_kwh;
+    }
+
+    void apply_preset(int p) {
+        if (p == 1) {
+            // 20K A100 Datacenter Default
+            model_idx = 0; // A100
+            gpu_count = 20000;
+            load_pct = 70.0;
+            pue = 1.30;
+            price_kwh = 0.10;
+        } else if (p == 2) {
+            // Home Inference Workstation
+            model_idx = 4; // RTX 4090 (450W)
+            gpu_count = 2;
+            load_pct = 60.0;
+            pue = 1.00;
+            price_kwh = 0.15;
+        } else if (p == 3) {
+            // 8x H100 HGX Server
+            model_idx = 1; // H100 (700W)
+            gpu_count = 8;
+            load_pct = 80.0;
+            pue = 1.20;
+            price_kwh = 0.10;
+        } else if (p == 4) {
+            // 1K H100 AI Cluster
+            model_idx = 1; // H100 (700W)
+            gpu_count = 1000;
+            load_pct = 75.0;
+            pue = 1.25;
+            price_kwh = 0.08;
+        }
+    }
+};

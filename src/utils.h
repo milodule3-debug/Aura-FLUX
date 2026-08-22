@@ -22,6 +22,24 @@ inline std::string format_double(double val, int precision) {
     return oss.str();
 }
 
+inline std::string format_power(double watts) {
+    if (watts >= 1e6) return format_double(watts / 1e6, 2) + " MW";
+    if (watts >= 1e3) return format_double(watts / 1e3, 1) + " kW";
+    return format_double(watts, 1) + " W";
+}
+
+inline std::string format_energy(double kwh) {
+    if (kwh >= 1e6) return format_double(kwh / 1e6, 2) + "M kWh (" + format_double(kwh / 1e6, 2) + " GWh)";
+    if (kwh >= 1e3) return format_double(kwh / 1e3, 1) + "k kWh";
+    return format_double(kwh, 0) + " kWh";
+}
+
+inline std::string format_money(double usd) {
+    if (usd >= 1e6) return format_double(usd / 1e6, 2) + "M";
+    if (usd >= 1e3) return format_double(usd / 1e3, 1) + "K";
+    return format_double(usd, 2);
+}
+
 inline std::string escape_json_string(const std::string& s) {
     std::ostringstream o;
     for (auto c : s) {
