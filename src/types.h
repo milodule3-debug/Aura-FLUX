@@ -137,6 +137,25 @@ struct GpuCalcState {
     double price_kwh = 0.10;        // $0.10 / kWh
     int selected_field = 0;         // 0: Model, 1: Count, 2: Load, 3: PUE, 4: Rate, 5: Presets, 6: Export
 
+    // Direct text box edit buffers
+    std::string count_str = "20000";
+    std::string custom_tdp_str = "400";
+    std::string load_str = "70";
+    std::string pue_str = "1.30";
+    std::string price_str = "0.10";
+
+    void sync_buffers() {
+        count_str = std::to_string(gpu_count);
+        custom_tdp_str = std::to_string(custom_tdp);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.1f", load_pct);
+        load_str = buf;
+        std::snprintf(buf, sizeof(buf), "%.2f", pue);
+        pue_str = buf;
+        std::snprintf(buf, sizeof(buf), "%.2f", price_kwh);
+        price_str = buf;
+    }
+
     int get_tdp() const {
         if (model_idx >= 0 && model_idx < static_cast<int>(GPU_PRESETS.size()) - 1) {
             return GPU_PRESETS[model_idx].tdp_watts;
@@ -221,5 +240,6 @@ struct GpuCalcState {
             pue = 1.25;
             price_kwh = 0.08;
         }
+        sync_buffers();
     }
 };

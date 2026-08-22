@@ -158,9 +158,10 @@ int main() {
         if (event == Event::Custom) return true;
         string input = event.input();
 
-        // Detect if user is actively typing in a text field (Tab 3, right pane (pane 2), editable items)
-        bool in_text_input = (current_tab.load() == 3 && vault_focus_pane == 2 &&
-                              (selected_ai_menu == 1 || selected_ai_menu == 2 || selected_ai_menu == 3));
+        // Detect if user is actively typing in a text field (Tab 3 text boxes or AI config)
+        bool in_text_input = (current_tab.load() == 3 &&
+                              ((vault_focus_pane == 1 && gpu_calc.selected_field >= 1 && gpu_calc.selected_field <= 4) ||
+                               (vault_focus_pane == 2 && (selected_ai_menu == 1 || selected_ai_menu == 2 || selected_ai_menu == 3))));
 
         // Global Tab Navigation — use FTXUI event constants for function keys
         if (event == Event::F1) { current_tab.store(0); return true; }
@@ -348,10 +349,12 @@ int main() {
                     return true;
                 }
 
-                // Preset direct hotkeys 1-4
-                if (input == "1" || input == "2" || input == "3" || input == "4") {
-                    gpu_calc.apply_preset(input[0] - '0');
-                    return true;
+                // Preset direct hotkeys 1-4 (when not typing in count/load/pue/price, or when focused on presets)
+                if (gpu_calc.selected_field == 0 || gpu_calc.selected_field == 5 || gpu_calc.selected_field == 6) {
+                    if (input == "1" || input == "2" || input == "3" || input == "4") {
+                        gpu_calc.apply_preset(input[0] - '0');
+                        return true;
+                    }
                 }
 
                 bool is_inc = (event == Event::ArrowRight || input == "+" || input == "=");
@@ -361,20 +364,35 @@ int main() {
                     // GPU Model selection
                     if (is_inc || event == Event::Return) {
                         gpu_calc.model_idx = (gpu_calc.model_idx + 1) % GPU_PRESETS.size();
+                        gpu_calc.sync_buffers();
                         return true;
                     } else if (is_dec) {
                         gpu_calc.model_idx = (gpu_calc.model_idx + static_cast<int>(GPU_PRESETS.size()) - 1) % GPU_PRESETS.size();
+                        gpu_calc.sync_buffers();
                         return true;
                     }
                 }
                 else if (gpu_calc.selected_field == 1) {
-                    // GPU Count
-                    int delta = (gpu_calc.gpu_count >= 10000) ? 1000 : (gpu_calc.gpu_count >= 1000) ? 500 : (gpu_calc.gpu_count >= 100) ? 100 : (gpu_calc.gpu_count >= 10) ? 5 : 1;
-                    if (is_inc) {
+                    // GPU Count - direct typing / backspace / stepping
+                    if (input.size() == 1 && std::isdigit(input[0])) {
+                        if (gpu_calc.count_str == "0") gpu_calc.count_str.clear();
+                        gpu_calc.count_str += input[0];
+                        if (gpu_calc.count_str.size() > 7) gpu_calc.count_str = gpu_calc.count_str.substr(0, 7);
+                        gpu_calc.gpu_count = std::max(1, std::atoi(gpu_calc.count_str.c_str()));
+                        return true;
+                    } else if (event == Event::Backspace) {
+                        if (!gpu_calc.count_str.empty()) gpu_calc.count_str.pop_back();
+                        gpu_calc.gpu_count = gpu_calc.count_str.empty() ? 1 : std::max(1, std::atoi(gpu_calc.count_str.c_str()));
+                        return true;
+                    } else if (is_inc) {
+                        int delta = (gpu_calc.gpu_count >= 10000) ? 1000 : (gpu_calc.gpu_count >= 1000) ? 500 : (gpu_calc.gpu_count >= 100) ? 100 : 10;
                         gpu_calc.gpu_count = min(1000000, gpu_calc.gpu_count + delta);
+                        gpu_calc.count_str = to_string(gpu_calc.gpu_count);
                         return true;
                     } else if (is_dec) {
+                        int delta = (gpu_calc.gpu_count > 10000) ? 1000 : (gpu_calc.gpu_count > 1000) ? 500 : (gpu_calc.gpu_count > 100) ? 100 : 10;
                         gpu_calc.gpu_count = max(1, gpu_calc.gpu_count - delta);
+                        gpu_calc.count_str = to_string(gpu_calc.gpu_count);
                         return true;
                     } else if (event == Event::Return) {
                         if (gpu_calc.gpu_count == 1) gpu_calc.gpu_count = 8;
@@ -383,36 +401,72 @@ int main() {
                         else if (gpu_calc.gpu_count == 1000) gpu_calc.gpu_count = 20000;
                         else if (gpu_calc.gpu_count == 20000) gpu_calc.gpu_count = 100000;
                         else gpu_calc.gpu_count = 1;
+                        gpu_calc.count_str = to_string(gpu_calc.gpu_count);
                         return true;
                     }
                 }
                 else if (gpu_calc.selected_field == 2) {
                     // Average Load %
-                    if (is_inc) {
+                    if (input.size() == 1 && std::isdigit(input[0])) {
+                        gpu_calc.load_str += input[0];
+                        if (gpu_calc.load_str.size() > 3) gpu_calc.load_str = gpu_calc.load_str.substr(0, 3);
+                        gpu_calc.load_pct = std::clamp(std::atof(gpu_calc.load_str.c_str()), 1.0, 100.0);
+                        return true;
+                    } else if (event == Event::Backspace) {
+                        if (!gpu_calc.load_str.empty()) gpu_calc.load_str.pop_back();
+                        gpu_calc.load_pct = gpu_calc.load_str.empty() ? 10.0 : std::clamp(std::atof(gpu_calc.load_str.c_str()), 1.0, 100.0);
+                        return true;
+                    } else if (is_inc) {
                         gpu_calc.load_pct = min(100.0, gpu_calc.load_pct + 5.0);
+                        char b[16]; std::snprintf(b, sizeof(b), "%.0f", gpu_calc.load_pct); gpu_calc.load_str = b;
                         return true;
                     } else if (is_dec) {
-                        gpu_calc.load_pct = max(10.0, gpu_calc.load_pct - 5.0);
+                        gpu_calc.load_pct = max(5.0, gpu_calc.load_pct - 5.0);
+                        char b[16]; std::snprintf(b, sizeof(b), "%.0f", gpu_calc.load_pct); gpu_calc.load_str = b;
                         return true;
                     }
                 }
                 else if (gpu_calc.selected_field == 3) {
                     // PUE Overhead
-                    if (is_inc) {
-                        gpu_calc.pue = min(2.50, gpu_calc.pue + 0.05);
+                    if (input.size() == 1 && (std::isdigit(input[0]) || input[0] == '.')) {
+                        if (input[0] == '.' && gpu_calc.pue_str.find('.') != string::npos) return true;
+                        gpu_calc.pue_str += input[0];
+                        if (gpu_calc.pue_str.size() > 4) gpu_calc.pue_str = gpu_calc.pue_str.substr(0, 4);
+                        gpu_calc.pue = std::clamp(std::atof(gpu_calc.pue_str.c_str()), 1.0, 3.0);
+                        return true;
+                    } else if (event == Event::Backspace) {
+                        if (!gpu_calc.pue_str.empty()) gpu_calc.pue_str.pop_back();
+                        gpu_calc.pue = gpu_calc.pue_str.empty() ? 1.0 : std::clamp(std::atof(gpu_calc.pue_str.c_str()), 1.0, 3.0);
+                        return true;
+                    } else if (is_inc) {
+                        gpu_calc.pue = min(3.00, gpu_calc.pue + 0.05);
+                        char b[16]; std::snprintf(b, sizeof(b), "%.2f", gpu_calc.pue); gpu_calc.pue_str = b;
                         return true;
                     } else if (is_dec) {
                         gpu_calc.pue = max(1.00, gpu_calc.pue - 0.05);
+                        char b[16]; std::snprintf(b, sizeof(b), "%.2f", gpu_calc.pue); gpu_calc.pue_str = b;
                         return true;
                     }
                 }
                 else if (gpu_calc.selected_field == 4) {
                     // Electricity Rate $/kWh
-                    if (is_inc) {
-                        gpu_calc.price_kwh = min(1.00, gpu_calc.price_kwh + 0.01);
+                    if (input.size() == 1 && (std::isdigit(input[0]) || input[0] == '.')) {
+                        if (input[0] == '.' && gpu_calc.price_str.find('.') != string::npos) return true;
+                        gpu_calc.price_str += input[0];
+                        if (gpu_calc.price_str.size() > 5) gpu_calc.price_str = gpu_calc.price_str.substr(0, 5);
+                        gpu_calc.price_kwh = std::clamp(std::atof(gpu_calc.price_str.c_str()), 0.001, 2.0);
+                        return true;
+                    } else if (event == Event::Backspace) {
+                        if (!gpu_calc.price_str.empty()) gpu_calc.price_str.pop_back();
+                        gpu_calc.price_kwh = gpu_calc.price_str.empty() ? 0.01 : std::clamp(std::atof(gpu_calc.price_str.c_str()), 0.001, 2.0);
+                        return true;
+                    } else if (is_inc) {
+                        gpu_calc.price_kwh = min(2.00, gpu_calc.price_kwh + 0.01);
+                        char b[16]; std::snprintf(b, sizeof(b), "%.2f", gpu_calc.price_kwh); gpu_calc.price_str = b;
                         return true;
                     } else if (is_dec) {
                         gpu_calc.price_kwh = max(0.01, gpu_calc.price_kwh - 0.01);
+                        char b[16]; std::snprintf(b, sizeof(b), "%.2f", gpu_calc.price_kwh); gpu_calc.price_str = b;
                         return true;
                     }
                 }
@@ -1591,67 +1645,106 @@ int main() {
             ) | color(vault_border_col) | size(HEIGHT, EQUAL, 8);
 
             // PANE 1: Live GPU Power & Cost Calculator
-            auto make_calc_field = [&](int f_idx, const string& label, const string& val_str, const string& hint) -> Element {
+            auto make_styled_text_box = [&](int f_idx, const string& label, const string& display_val, const string& sub_info, const string& key_hint) -> Element {
                 bool is_sel = (vault_focus_pane == 1) && (gpu_calc.selected_field == f_idx);
-                auto prefix = is_sel ? " ⚙ " : "   ";
-                auto col = is_sel ? primary_color : Color::White;
-                auto val_col = is_sel ? accent_color : Color::White;
-                Elements items;
-                items.push_back(hbox({
-                    text(prefix + label) | bold | color(col),
-                    filler(),
-                    text(val_str + " ") | bold | color(val_col)
-                }));
-                if (is_sel) {
-                    items.push_back(hbox({ text("     " + hint) | color(Color::GrayLight) }));
-                }
-                return vbox(move(items));
+                auto title_col = is_sel ? primary_color : Color::White;
+                auto box_border_col = is_sel ? primary_color : Color::RGB(70, 70, 80);
+                auto val_col = is_sel ? accent_color : Color::RGB(220, 220, 220);
+                auto bg_col = is_sel ? Color::RGB(25, 30, 45) : Color::Default;
+
+                return vbox({
+                    hbox({
+                        text(is_sel ? " ⚙ " : "   ") | bold | color(title_col),
+                        text(label) | bold | color(title_col),
+                        filler(),
+                        text(key_hint) | color(is_sel ? secondary_color : Color::GrayDark)
+                    }),
+                    hbox({
+                        text("   "),
+                        hbox({
+                            text(is_sel ? " ▌ " : "   ") | bold | color(primary_color),
+                            text(display_val) | bold | color(val_col),
+                            filler(),
+                            text(sub_info.empty() ? "" : (" (" + sub_info + ") ")) | color(Color::GrayLight)
+                        }) | borderRounded | color(box_border_col) | bgcolor(bg_col) | flex
+                    })
+                });
             };
 
             auto calc_inputs = vbox({
-                make_calc_field(0, L("GPU Model:", "GPU Модел:"), "< " + gpu_calc.get_model_name() + " >", L("[←/→/Enter] Cycle Model", "[←/→/Enter] Избор модела")),
-                separator(),
-                make_calc_field(1, L("GPU Units:", "Број GPU-ова:"), "< " + to_string(gpu_calc.gpu_count) + " >", L("[←/→] Adjust Count, [Enter] Scale", "[←/→] Промени број")),
-                separator(),
-                make_calc_field(2, L("Load (% TDP):", "Оптерећење (%):"), "< " + format_double(gpu_calc.load_pct, 1) + "% (" + format_double(gpu_calc.get_avg_watts_per_gpu(), 1) + "W) >", L("[←/→] +/- 5% average draw", "[←/→] +/- 5% потрошње")),
-                separator(),
-                make_calc_field(3, L("Facility PUE:", "PUE Фактор:"), "< " + format_double(gpu_calc.pue, 2) + "x >", L("[←/→] 1.0 (Direct) to 2.0 (Legacy)", "[←/→] 1.0 до 2.0 PUE")),
-                separator(),
-                make_calc_field(4, L("Tariff ($/kWh):", "Цена kWh:"), "< $" + format_double(gpu_calc.price_kwh, 2) + " >", L("[←/→] Commercial/Industrial rate", "[←/→] Индустријска цена")),
-                separator(),
-                make_calc_field(5, L("Quick Presets:", "Брзи Режими:"), "[1]20K [2]Home [3]8x [4]1K", L("Press [1-4] or [Enter] to apply", "Притисните [1-4] за избор")),
-                separator(),
-                make_calc_field(6, L("Copy / Export:", "Сачувај / Копирај:"), "[Enter] -> " + L("Save to Vault", "Убаци у Сеф"), L("Copies full report to clipboard", "Копира комплетан извештај")),
-                separator(),
-                // Real-time Calculated Outputs
-                hbox({
-                    text(" " + L("IT Cluster Draw:", "ИТ Потрошња:") + " ") | color(Color::GrayLight),
-                    filler(),
-                    text(format_power(gpu_calc.get_total_it_watts())) | bold | color(primary_color)
+                make_styled_text_box(0, L("GPU Model / Architecture:", "GPU Модел / Архитектура:"), "< " + gpu_calc.get_model_name() + " >", to_string(gpu_calc.get_tdp()) + "W TDP", L("[←/→/Enter] Cycle", "[←/→/Enter] Избор")),
+                make_styled_text_box(1, L("GPU Units Count:", "Број GPU-ова:"), gpu_calc.count_str, "", L("[Type digits / +/-]", "[Укуцај / +/-]")),
+                make_styled_text_box(2, L("Average Running Load (%):", "Просечно Оптерећење (%):"), gpu_calc.load_str + " %", format_double(gpu_calc.get_avg_watts_per_gpu(), 1) + " W/GPU", L("[Type / +/-]", "[Укуцај / +/-]")),
+                make_styled_text_box(3, L("Facility PUE Overhead:", "PUE Фактор Објекта:"), gpu_calc.pue_str + " x", format_double((gpu_calc.pue - 1.0) * 100.0, 0) + "% overhead", L("[Type / +/-]", "[Укуцај / +/-]")),
+                make_styled_text_box(4, L("Electricity Tariff ($/kWh):", "Цена Струје ($/kWh):"), "$" + gpu_calc.price_str + " / kWh", "", L("[Type / +/-]", "[Укуцај / +/-]")),
+                
+                // Quick Presets Bar
+                vbox({
+                    hbox({
+                        text((vault_focus_pane == 1 && gpu_calc.selected_field == 5) ? " ⚙ " : "   ") | bold | color((vault_focus_pane == 1 && gpu_calc.selected_field == 5) ? primary_color : Color::White),
+                        text(L("Quick Hardware Presets:", "Брзи Хардверски Режими:")) | bold | color((vault_focus_pane == 1 && gpu_calc.selected_field == 5) ? primary_color : Color::White),
+                        filler(),
+                        text(L("[1-4 / Enter]", "[1-4 / Enter]")) | color((vault_focus_pane == 1 && gpu_calc.selected_field == 5) ? secondary_color : Color::GrayDark)
+                    }),
+                    hbox({
+                        text("   "),
+                        hbox({
+                            text(" [1] 20K A100 DC ") | bold | color(Color::Cyan),
+                            text(" [2] Home 2x4090 ") | bold | color(Color::Yellow),
+                            text(" [3] 8x H100 ") | bold | color(Color::Magenta),
+                            text(" [4] 1K H100 ") | bold | color(Color::Green)
+                        }) | borderRounded | color((vault_focus_pane == 1 && gpu_calc.selected_field == 5) ? primary_color : Color::GrayDark) | flex
+                    })
                 }),
-                hbox({
-                    text(" " + L("Facility Load (PUE " + format_double(gpu_calc.pue, 2) + "):", "Датацентар (PUE):") + " ") | color(Color::GrayLight),
-                    filler(),
-                    text(format_power(gpu_calc.get_facility_watts())) | bold | color(accent_color)
+
+                // Real-Time Results Matrix Card
+                vbox({
+                    hbox({
+                        text(" ⚡ " + L("LIVE TELEMETRY & COST MATRIX", "ЛАЈВ ТЕЛЕМЕТРИЈА И ТРОШКОВИ")) | bold | color(glow_color),
+                        filler(),
+                        text(L("Continuous 24/7/365", "Непрекидан рад 24/7/365")) | color(Color::GrayDark)
+                    }),
+                    vbox({
+                        hbox({
+                            text(" • " + L("IT Cluster Draw:", "ИТ Потрошња:") + " ") | color(Color::GrayLight),
+                            filler(),
+                            text(format_power(gpu_calc.get_total_it_watts())) | bold | color(primary_color)
+                        }),
+                        hbox({
+                            text(" • " + L("Facility Power (PUE " + format_double(gpu_calc.pue, 2) + "):", "Датацентар (PUE):") + " ") | color(Color::GrayLight),
+                            filler(),
+                            text(format_power(gpu_calc.get_facility_watts())) | bold | color(accent_color)
+                        }),
+                        separator(),
+                        hbox({
+                            text(" • " + L("Annual Energy (8,760h):", "Годишња енергија:") + " ") | color(Color::GrayLight),
+                            filler(),
+                            text(format_energy(gpu_calc.get_yearly_kwh())) | bold | color(success_color)
+                        }),
+                        hbox({
+                            text(" • " + L("Annual Electricity Cost:", "Годишњи трошак:") + " ") | bold | color(Color::White),
+                            filler(),
+                            text("$" + format_money(gpu_calc.get_yearly_cost()) + " / yr") | bold | color(Color::RGB(0, 255, 128))
+                        }),
+                        hbox({
+                            text(" • " + L("Breakdown:", "Расподела:") + " ") | color(Color::GrayDark),
+                            filler(),
+                            text("$" + format_money(gpu_calc.get_monthly_cost()) + "/mo · $" + format_money(gpu_calc.get_daily_cost()) + "/d · $" + format_double(gpu_calc.get_hourly_cost(), 0) + "/h") | color(Color::GrayLight)
+                        })
+                    }) | border | color(Color::RGB(50, 70, 100))
                 }),
-                separator(),
+
+                // Save Button
                 hbox({
-                    text(" " + L("Annual Energy (8,760h):", "Годишња енергија:") + " ") | color(Color::GrayLight),
-                    filler(),
-                    text(format_energy(gpu_calc.get_yearly_kwh())) | bold | color(success_color)
+                    text("   "),
+                    hbox({
+                        filler(),
+                        text(L("💾 [Enter / c] Save Breakdown to Vault & Copy to Clipboard", "💾 [Enter / c] Сачувај у Сеф и Копирај")) | bold | color((vault_focus_pane == 1 && gpu_calc.selected_field == 6) ? Color::Black : primary_color),
+                        filler()
+                    }) | borderRounded | bgcolor((vault_focus_pane == 1 && gpu_calc.selected_field == 6) ? primary_color : Color::Default) | color((vault_focus_pane == 1 && gpu_calc.selected_field == 6) ? Color::White : primary_color) | flex
                 }),
-                hbox({
-                    text(" " + L("Annual Electricity Cost:", "Годишњи трошак:") + " ") | bold | color(Color::White),
-                    filler(),
-                    text("$" + format_money(gpu_calc.get_yearly_cost()) + " / yr") | bold | color(Color::RGB(0, 255, 128))
-                }),
-                hbox({
-                    text(" " + L("Monthly / Daily / Hourly:", "Месечно/Дневно/Сат:") + " ") | color(Color::GrayDark),
-                    filler(),
-                    text("$" + format_money(gpu_calc.get_monthly_cost()) + "/mo · $" + format_money(gpu_calc.get_daily_cost()) + "/d · $" + format_double(gpu_calc.get_hourly_cost(), 0) + "/h") | color(Color::GrayLight)
-                }),
-                separator(),
-                text(" " + L("Citations: NVIDIA Specs · Uptime Inst. PUE · U.S. EIA", "Извори: NVIDIA · Uptime Institute PUE · U.S. EIA")) | color(Color::GrayDark)
+
+                text(" " + L("Sources: NVIDIA Tech Specs · Uptime Institute PUE · U.S. EIA Electric Rates", "Извори: NVIDIA · Uptime Institute · U.S. EIA")) | color(Color::GrayDark)
             });
 
             auto calc_border_col = (vault_focus_pane == 1) ? primary_color : border_color;
@@ -1660,7 +1753,7 @@ int main() {
                 calc_inputs | vscroll_indicator | frame
             ) | color(calc_border_col) | flex;
 
-            auto left_pane = vbox(vault_box, datacenter_box) | size(WIDTH, EQUAL, 48);
+            auto left_pane = vbox(vault_box, datacenter_box) | size(WIDTH, EQUAL, 52);
 
             // PANE 2: AI COPILOT
             auto make_ai_input_row = [&](int idx, const string& label, const string& val) -> Element {
